@@ -2,7 +2,7 @@
 
 A real-time GLSL fragment shader editor and visualizer built with Next.js and WebGL 2.0.
 
-![ShaderMaker](screen01.png)
+![ShaderMaker](https://github.com/michele-prandina/ShaderMaker/blob/main/screenshot.png)
 
 ## Features
 
