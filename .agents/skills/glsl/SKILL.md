@@ -1,497 +1,324 @@
 ---
 name: glsl
-description: GLSL shader programming for JARVIS holographic effects
+description: GLSL ES 3.00 shader generation for ShaderMmaker — AI-powered fragment shader creation from natural language
 model: sonnet
 risk_level: LOW
-version: 1.1.0
+version: 2.0.0
 ---
 
-# GLSL Shader Programming Skill
+# GLSL Shader Generation Skill
 
-> **File Organization**: This skill uses split structure. See `references/` for advanced shader patterns.
+> **File Organization**: Core patterns inline. See `references/advanced-patterns.md` for SDF library, noise functions, and complete effect recipes.
 
 ## 1. Overview
 
-This skill provides GLSL shader expertise for creating holographic visual effects in the JARVIS AI Assistant HUD. It focuses on efficient GPU programming for real-time rendering.
+This skill powers AI-generated GLSL ES 3.00 fragment shaders in ShaderMmaker. When a user describes a visual effect in natural language, this skill guides the generation of correct, performant, visually stunning shader code.
 
-**Risk Level**: LOW - GPU-side code with limited attack surface, but can cause performance issues
+**Target**: WebGL 2.0 fullscreen fragment shaders (no vertex shader — fullscreen triangle approach)
 
-**Primary Use Cases**:
-- Holographic panel effects with scanlines
-- Animated energy fields and particle systems
-- Data visualization with custom rendering
-- Post-processing effects (bloom, glitch, chromatic aberration)
+**Available Uniforms** (provided by the engine):
+- `uniform vec2 u_resolution;` — viewport size in pixels
+- `uniform float u_time;` — elapsed time in seconds
+- `uniform vec2 u_mouse;` — mouse position in pixels
 
-## 2. Core Responsibilities
-
-### 2.1 Fundamental Principles
-
-1. **TDD First**: Write visual regression tests and shader unit tests before implementation
-2. **Performance Aware**: Profile GPU performance, optimize for 60 FPS target
-3. **Precision Matters**: Use appropriate precision qualifiers for performance
-4. **Avoid Branching**: Minimize conditionals in shaders for GPU efficiency
-5. **Optimize Math**: Use built-in functions, avoid expensive operations
-6. **Uniform Safety**: Validate uniform inputs before sending to GPU
-7. **Loop Bounds**: Always use constant loop bounds to prevent GPU hangs
-8. **Memory Access**: Optimize texture lookups and varying interpolation
-
-## 3. Implementation Workflow (TDD)
-
-### 3.1 Step 1: Write Failing Test First
-
-```typescript
-// tests/shaders/holographic-panel.test.ts
-import { describe, it, expect, beforeEach } from 'vitest'
-import { WebGLTestContext, captureFramebuffer, compareImages } from '../utils/webgl-test'
-
-describe('HolographicPanelShader', () => {
-  let ctx: WebGLTestContext
-
-  beforeEach(() => {
-    ctx = new WebGLTestContext(256, 256)
-  })
-
-  // Unit test: Shader compiles
-  it('should compile without errors', () => {
-    const shader = ctx.compileShader(holoFragSource, ctx.gl.FRAGMENT_SHADER)
-    expect(shader).not.toBeNull()
-    expect(ctx.getShaderErrors()).toEqual([])
-  })
-
-  // Unit test: Uniforms are accessible
-  it('should have required uniforms', () => {
-    const program = ctx.createProgram(vertSource, holoFragSource)
-    expect(ctx.getUniformLocation(program, 'uTime')).not.toBeNull()
-    expect(ctx.getUniformLocation(program, 'uColor')).not.toBeNull()
-    expect(ctx.getUniformLocation(program, 'uOpacity')).not.toBeNull()
-  })
-
-  // Visual regression test
-  it('should render scanlines correctly', async () => {
-    ctx.renderShader(holoFragSource, { uTime: 0, uColor: [0, 0.5, 1], uOpacity: 1 })
-    const result = captureFramebuffer(ctx)
-    const baseline = await loadBaseline('holographic-scanlines.png')
-    expect(compareImages(result, baseline, { threshold: 0.01 })).toBeLessThan(0.01)
-  })
-
-  // Edge case test
-  it('should handle extreme UV values', () => {
-    const testCases = [
-      { uv: [0, 0], expected: 'no crash' },
-      { uv: [1, 1], expected: 'no crash' },
-      { uv: [0.5, 0.5], expected: 'no crash' }
-    ]
-    testCases.forEach(({ uv }) => {
-      expect(() => ctx.renderAtUV(holoFragSource, uv)).not.toThrow()
-    })
-  })
-})
+**Custom Uniforms**: Declared with range comments, auto-detected by the UI:
+```glsl
+// range: 0.0 - 10.0, default: 5.0
+uniform float u_intensity;
 ```
 
-### 3.2 Step 2: Implement Minimum to Pass
+## 2. Shader Requirements
 
+Every generated shader MUST:
+
+1. Start with `#version 300 es` as the very first line
+2. Declare `precision highp float;`
+3. Declare `out vec4 fragColor;` (NOT `gl_FragColor`)
+4. Use explicit float literals: `1.0` not `1`, `2.0` not `2`
+5. Use constant loop bounds with early `break`
+6. Guard all divisions: `1.0 / max(d, 0.001)`
+7. Include at least `u_resolution` and `u_time` uniforms
+8. Output visible content (not just black)
+9. Animate with `u_time`
+10. Correct aspect ratio: `(gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y`
+
+## 3. Generation Pipeline
+
+```
+1. Parse prompt → Extract keywords (style, motion, color, technique)
+2. Select template → 2D (simple) or 3D (raymarched)
+3. Map keywords → Technique functions (see §5)
+4. Generate uniforms → With range comments for UI sliders
+5. Assemble helpers → Only include functions actually used
+6. Build main scene → Combine techniques
+7. Add post-processing → Vignette, ACES tone mapping, gamma
+8. Validate → GLSL ES 3.00 compliance check
+```
+
+## 4. Templates
+
+### Minimal 2D Template
 ```glsl
-// Start with minimal shader that passes tests
 #version 300 es
 precision highp float;
 
-uniform float uTime;
-uniform vec3 uColor;
-uniform float uOpacity;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
 
-in vec2 vUv;
 out vec4 fragColor;
 
+const float PI = 3.14159265359;
+const float TAU = 6.28318530718;
+
+// --- Helpers (include only what's needed) ---
+
 void main() {
-  // Minimal implementation to pass compilation test
-  fragColor = vec4(uColor, uOpacity);
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+
+    // Effect goes here
+    vec3 color = vec3(0.0);
+
+    // Post-processing
+    color = clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
+    color = pow(color, vec3(1.0 / 2.2));
+
+    fragColor = vec4(color, 1.0);
 }
 ```
 
-### 3.3 Step 3: Refactor with Full Implementation
-
-```glsl
-// Expand to full implementation after tests pass
-void main() {
-  vec2 uv = vUv;
-  float scanline = sin(uv.y * 100.0) * 0.1 + 0.9;
-  float pulse = sin(uTime * 2.0) * 0.1 + 0.9;
-  vec3 color = uColor * scanline * pulse;
-  fragColor = vec4(color, uOpacity);
-}
-```
-
-### 3.4 Step 4: Run Full Verification
-
-```bash
-# Run all shader tests
-npm run test:shaders
-
-# Visual regression tests
-npm run test:visual -- --update-snapshots  # First time only
-npm run test:visual
-
-# Performance benchmark
-npm run bench:shaders
-
-# Cross-browser compilation check
-npm run test:webgl-compat
-```
-
-## 4. Technology Stack & Versions
-
-### 4.1 GLSL Versions
-
-| Version | Context | Features |
-|---------|---------|----------|
-| GLSL ES 3.00 | WebGL 2.0 | Modern features, better precision |
-| GLSL ES 1.00 | WebGL 1.0 | Legacy support |
-
-### 4.2 Shader Setup
-
+### 3D Raymarching Template
 ```glsl
 #version 300 es
 precision highp float;
-precision highp int;
 
-// WebGL 2.0 shader header
-```
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
 
-## 5. Performance Patterns
-
-### 5.1 Avoid Branching - Use Mix/Step
-
-```glsl
-// ❌ BAD - GPU branch divergence
-vec3 getColor(float value) {
-  if (value < 0.3) {
-    return vec3(1.0, 0.0, 0.0);  // Red
-  } else if (value < 0.7) {
-    return vec3(1.0, 1.0, 0.0);  // Yellow
-  } else {
-    return vec3(0.0, 1.0, 0.0);  // Green
-  }
-}
-
-// ✅ GOOD - Branchless with mix/step
-vec3 getColor(float value) {
-  vec3 red = vec3(1.0, 0.0, 0.0);
-  vec3 yellow = vec3(1.0, 1.0, 0.0);
-  vec3 green = vec3(0.0, 1.0, 0.0);
-
-  vec3 color = mix(red, yellow, smoothstep(0.3, 0.31, value));
-  color = mix(color, green, smoothstep(0.7, 0.71, value));
-  return color;
-}
-```
-
-### 5.2 Texture Atlases - Reduce Draw Calls
-
-```glsl
-// ❌ BAD - Multiple texture bindings
-uniform sampler2D uIcon1;
-uniform sampler2D uIcon2;
-uniform sampler2D uIcon3;
-
-vec4 getIcon(int id) {
-  if (id == 0) return texture(uIcon1, vUv);
-  if (id == 1) return texture(uIcon2, vUv);
-  return texture(uIcon3, vUv);
-}
-
-// ✅ GOOD - Single atlas texture
-uniform sampler2D uIconAtlas;
-uniform vec4 uAtlasOffsets[3];  // [x, y, width, height] for each icon
-
-vec4 getIcon(int id) {
-  vec4 offset = uAtlasOffsets[id];
-  vec2 atlasUV = offset.xy + vUv * offset.zw;
-  return texture(uIconAtlas, atlasUV);
-}
-```
-
-### 5.3 Level of Detail (LOD) - Distance-Based Quality
-
-```glsl
-// ❌ BAD - Same quality regardless of distance
-const int NOISE_OCTAVES = 8;
-
-float noise(vec3 p) {
-  float result = 0.0;
-  for (int i = 0; i < NOISE_OCTAVES; i++) {
-    result += snoise(p * pow(2.0, float(i)));
-  }
-  return result;
-}
-
-// ✅ GOOD - Reduce octaves based on distance
-uniform float uCameraDistance;
-
-float noise(vec3 p) {
-  // Fewer octaves when far away (detail not visible)
-  int octaves = int(mix(2.0, 8.0, 1.0 - smoothstep(10.0, 100.0, uCameraDistance)));
-  float result = 0.0;
-  for (int i = 0; i < 8; i++) {
-    if (i >= octaves) break;
-    result += snoise(p * pow(2.0, float(i)));
-  }
-  return result;
-}
-```
-
-### 5.4 Uniform Batching - Minimize CPU-GPU Transfers
-
-```glsl
-// ❌ BAD - Many individual uniforms
-uniform float uPosX;
-uniform float uPosY;
-uniform float uPosZ;
-uniform float uRotX;
-uniform float uRotY;
-uniform float uRotZ;
-uniform float uScaleX;
-uniform float uScaleY;
-uniform float uScaleZ;
-
-// ✅ GOOD - Packed into vectors/matrices
-uniform vec3 uPosition;
-uniform vec3 uRotation;
-uniform vec3 uScale;
-// Or even better:
-uniform mat4 uTransform;
-```
-
-### 5.5 Precision Optimization - Use Appropriate Precision
-
-```glsl
-// ❌ BAD - Everything highp (wastes GPU cycles)
-precision highp float;
-
-highp vec3 color;
-highp float alpha;
-highp vec2 uv;
-
-// ✅ GOOD - Match precision to data needs
-precision highp float;  // Default for calculations
-
-mediump vec3 color;     // 0-1 range, mediump sufficient
-mediump float alpha;    // 0-1 range
-highp vec2 uv;          // Need precision for texture coords
-lowp int flags;         // Boolean-like values
-```
-
-### 5.6 Cache Texture Lookups
-
-```glsl
-// ❌ BAD - Redundant texture fetches
-void main() {
-  vec3 diffuse = texture(uTexture, vUv).rgb;
-  // ... some code ...
-  float alpha = texture(uTexture, vUv).a;  // Same lookup!
-  // ... more code ...
-  vec3 doubled = texture(uTexture, vUv).rgb * 2.0;  // Again!
-}
-
-// ✅ GOOD - Cache the result
-void main() {
-  vec4 texSample = texture(uTexture, vUv);
-  vec3 diffuse = texSample.rgb;
-  float alpha = texSample.a;
-  vec3 doubled = texSample.rgb * 2.0;
-}
-```
-
-## 6. Implementation Patterns
-
-### 6.1 Holographic Panel Shader
-
-```glsl
-// shaders/holographic-panel.frag
-#version 300 es
-precision highp float;
-
-uniform float uTime;
-uniform vec3 uColor;
-uniform float uOpacity;
-uniform vec2 uResolution;
-
-in vec2 vUv;
 out vec4 fragColor;
 
-const int SCANLINE_COUNT = 50;
+const float PI = 3.14159265359;
+const float TAU = 6.28318530718;
+const int MAX_STEPS = 100;
+const float MAX_DIST = 100.0;
+const float EPSILON = 0.001;
 
-void main() {
-  vec2 uv = vUv;
+// --- SDF + helpers ---
 
-  // Scanline effect
-  float scanline = 0.0;
-  for (int i = 0; i < SCANLINE_COUNT; i++) {
-    float y = float(i) / float(SCANLINE_COUNT);
-    scanline += smoothstep(0.0, 0.002, abs(uv.y - y));
-  }
-  scanline = 1.0 - scanline * 0.3;
-
-  // Edge glow
-  float edge = 1.0 - smoothstep(0.0, 0.05, min(
-    min(uv.x, 1.0 - uv.x),
-    min(uv.y, 1.0 - uv.y)
-  ));
-
-  // Animated pulse
-  float pulse = sin(uTime * 2.0) * 0.1 + 0.9;
-
-  vec3 color = uColor * scanline * pulse;
-  color += vec3(0.0, 0.5, 1.0) * edge * 0.5;
-
-  fragColor = vec4(color, uOpacity);
+float map(vec3 p) {
+    // Scene definition
+    return length(p) - 1.0;
 }
-```
 
-### 6.2 Energy Field Shader
-
-```glsl
-// shaders/energy-field.frag
-#version 300 es
-precision highp float;
-
-uniform float uTime;
-uniform vec3 uColor;
-
-in vec2 vUv;
-in vec3 vNormal;
-in vec3 vViewPosition;
-out vec4 fragColor;
-
-float snoise(vec3 v) {
-  return fract(sin(dot(v, vec3(12.9898, 78.233, 45.543))) * 43758.5453);
+vec3 calcNormal(vec3 p) {
+    const vec2 e = vec2(EPSILON, 0.0);
+    return normalize(vec3(
+        map(p + e.xyy) - map(p - e.xyy),
+        map(p + e.yxy) - map(p - e.yxy),
+        map(p + e.yyx) - map(p - e.yyx)
+    ));
 }
 
 void main() {
-  vec3 viewDir = normalize(-vViewPosition);
-  float fresnel = pow(1.0 - abs(dot(viewDir, vNormal)), 3.0);
-  float noise = snoise(vec3(vUv * 5.0, uTime * 0.5));
+    vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution.xy) / u_resolution.y;
+    vec3 ro = vec3(0.0, 0.0, -3.0);
+    vec3 rd = normalize(vec3(uv, 1.0));
 
-  vec3 color = uColor * fresnel;
-  color += uColor * noise * 0.2;
-  float alpha = fresnel * 0.8 + noise * 0.1;
+    float t = 0.0;
+    for (int i = 0; i < MAX_STEPS; i++) {
+        vec3 p = ro + rd * t;
+        float d = map(p);
+        if (d < EPSILON || t > MAX_DIST) break;
+        t += d;
+    }
 
-  fragColor = vec4(color, alpha);
+    vec3 color = vec3(0.0);
+    if (t < MAX_DIST) {
+        vec3 p = ro + rd * t;
+        vec3 n = calcNormal(p);
+        color = vec3(max(dot(n, normalize(vec3(1, 2, -1))), 0.0));
+    }
+
+    fragColor = vec4(color, 1.0);
 }
 ```
 
-### 6.3 Data Visualization Shader
+## 5. Keyword-to-Technique Mapping
 
+| User says | Technique | Key function |
+|-----------|-----------|-------------|
+| swirling, spiral, vortex | Polar coords + angle distortion | `atan(uv.y, uv.x) + radius * k` |
+| pulsing, breathing | Sin/cos modulation | `sin(u_time * speed) * 0.5 + 0.5` |
+| fractal, recursive | FBM (Fractal Brownian Motion) | `fbm(uv, octaves)` |
+| glowing, neon, energy | Inverse-distance glow | `intensity / (d * d + 0.001)` |
+| electric, lightning | High-freq noise + threshold | `smoothstep(0.95, 1.0, noise(...))` |
+| kaleidoscope, mirrored | Polar repetition | `mod(angle, TAU / N)` |
+| flowing, liquid, fluid | Noise-based UV distortion | `uv += noise(uv) * amount` |
+| tunnel, warp | Inverse-radius mapping | `vec2(angle/PI, 1.0/dist)` |
+| cellular, organic | Voronoi / Worley noise | F1, F2 distances |
+| geometric, shapes | SDFs with repetition | `mod(p, period) - period*0.5` |
+| galaxy, nebula, stars | FBM + spiral + star particles | Layered approach |
+| aurora, northern lights | Vertical noise bands + gradient | Wave distortion |
+| ocean, water, waves | Gerstner waves + Fresnel | Layered wave functions |
+| crystal, gem | Faceted refraction + dispersion | RGB offset per facet |
+| holographic, iridescent | Fresnel + interference | View-dependent rainbow |
+| cyberpunk, neon city | SDF glow + scanlines + grid | Neon glow formula |
+| fire, flame | Upward FBM + fire gradient | Temperature coloring |
+| smoke, clouds | Turbulent FBM + density fade | Volumetric accumulation |
+| 3D object, raymarched | SDF scene + lighting | Full raymarch pipeline |
+
+## 6. Essential Helper Functions
+
+### Cosine Palette (IQ's technique — the gold standard)
 ```glsl
-// shaders/data-bar.frag
-#version 300 es
-precision highp float;
+vec3 palette(float t, vec3 a, vec3 b, vec3 c, vec3 d) {
+    return a + b * cos(TAU * (c * t + d));
+}
 
-uniform float uValue;
-uniform float uThreshold;
-uniform vec3 uColorLow;
-uniform vec3 uColorHigh;
-uniform vec3 uColorWarning;
+// Presets: pass different d values for different moods
+// Rainbow:    d = vec3(0.0, 0.33, 0.67)
+// Warm:       d = vec3(0.0, 0.10, 0.20)
+// Cool:       d = vec3(0.0, 0.15, 0.20) with c = vec3(1.0, 0.7, 0.4)
+// Sunset:     d = vec3(0.8, 0.90, 0.30) with c = vec3(1.0, 1.0, 0.5)
+```
 
-in vec2 vUv;
-out vec4 fragColor;
+### Hash + Noise + FBM
+```glsl
+float hash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
 
-void main() {
-  float fill = step(vUv.x, uValue);
-  vec3 color = mix(uColorLow, uColorHigh, uValue);
-  color = mix(color, uColorWarning, step(uThreshold, uValue));
-  float gradient = vUv.y * 0.3 + 0.7;
-  fragColor = vec4(color * gradient * fill, fill);
+float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(hash(i), hash(i + vec2(1, 0)), f.x),
+               mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
+}
+
+float fbm(vec2 p, int octaves) {
+    float v = 0.0, a = 0.5, freq = 1.0;
+    for (int i = 0; i < 8; i++) {
+        if (i >= octaves) break;
+        v += a * noise(p * freq);
+        freq *= 2.0;
+        a *= 0.5;
+    }
+    return v;
 }
 ```
 
-## 7. Security & Performance Standards
-
-### 7.1 GPU Safety
-
-| Risk | Mitigation |
-|------|------------|
-| Infinite loops | Always use constant loop bounds |
-| GPU hangs | Test shaders with small datasets first |
-| Memory exhaustion | Limit texture sizes |
-
-### 7.2 Loop Safety Pattern
-
+### Rotation
 ```glsl
-// ❌ BAD - Dynamic loop bound
-for (int i = 0; i < int(uCount); i++) { }
-
-// ✅ GOOD - Constant loop bound
-const int MAX_ITERATIONS = 100;
-for (int i = 0; i < MAX_ITERATIONS; i++) {
-  if (i >= int(uCount)) break;
+mat2 rot2D(float a) {
+    float c = cos(a), s = sin(a);
+    return mat2(c, -s, s, c);
 }
 ```
 
-## 8. Common Mistakes & Anti-Patterns
+### Post-Processing (always include)
+```glsl
+// ACES tone mapping (inline version)
+vec3 aces(vec3 x) {
+    return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
 
-### 8.1 Never: Use Dynamic Loop Bounds
+// Vignette
+vec3 vignette(vec3 col, vec2 uv, float strength) {
+    return col * mix(1.0, smoothstep(0.8, 0.4, length(uv)), strength);
+}
+```
+
+## 7. Custom Uniform Conventions
+
+Format: `// range: MIN - MAX, default: VALUE`
 
 ```glsl
-// ❌ DANGEROUS - May cause GPU hang
-for (int i = 0; i < uniformValue; i++) { }
+// === COMMON PATTERNS ===
 
-// ✅ SAFE - Constant bound with early exit
+// range: 0.0 - 5.0, default: 1.0
+uniform float u_speed;
+
+// range: 0.1 - 5.0, default: 1.0
+uniform float u_scale;
+
+// range: 0.0 - 10.0, default: 5.0
+uniform float u_glow_intensity;
+
+// range: 0.0 - 1.0, default: 0.5
+uniform float u_smoothness;
+
+// range: 0.0 - 6.283, default: 0.0
+uniform float u_color_shift;
+```
+
+Use `u_` prefix, snake_case, descriptive names. Group related uniforms with common prefixes.
+
+## 8. Quality Checklist
+
+Before returning generated shader code:
+
+- [ ] `#version 300 es` is first line
+- [ ] `precision highp float;` declared
+- [ ] `out vec4 fragColor;` declared (not gl_FragColor)
+- [ ] All number literals are floats: `1.0` not `1`
+- [ ] All loops use constant bounds
+- [ ] No division by zero possible
+- [ ] Uses `u_time` for animation
+- [ ] Aspect ratio corrected
+- [ ] ACES tone mapping applied
+- [ ] Gamma correction: `pow(color, vec3(1.0/2.2))`
+- [ ] Custom uniforms have range comments
+- [ ] No unused helper functions included
+- [ ] Visually produces something (not black screen)
+
+## 9. Anti-Patterns to Avoid
+
+```glsl
+// WRONG: Integer in float context
+vec2 uv = uv * 2 - 1;
+// RIGHT:
+vec2 uv = uv * 2.0 - 1.0;
+
+// WRONG: Using gl_FragColor
+gl_FragColor = vec4(1.0);
+// RIGHT:
+fragColor = vec4(1.0);
+
+// WRONG: Dynamic loop bound
+for (int i = 0; i < int(u_count); i++) { }
+// RIGHT:
 const int MAX = 100;
 for (int i = 0; i < MAX; i++) {
-  if (i >= uniformValue) break;
+    if (float(i) >= u_count) break;
 }
+
+// WRONG: Unbounded division
+float glow = 1.0 / distance;
+// RIGHT:
+float glow = 1.0 / max(distance, 0.001);
+
+// WRONG: Large time values causing jitter
+float t = u_time * 1000.0;
+// RIGHT:
+float t = mod(u_time, TAU);
 ```
 
-### 8.2 Never: Divide Without Checking Zero
+## 10. Performance Guidelines
 
-```glsl
-// ❌ DANGEROUS - Division by zero
-float result = value / divisor;
-
-// ✅ SAFE - Guard against zero
-float result = value / max(divisor, 0.0001);
-```
-
-## 9. Pre-Implementation Checklist
-
-### Phase 1: Before Writing Code
-
-- [ ] Write shader compilation test
-- [ ] Write uniform accessibility test
-- [ ] Create baseline images for visual regression tests
-- [ ] Define performance targets (FPS, draw calls)
-- [ ] Review existing shaders for reusable patterns
-
-### Phase 2: During Implementation
-
-- [ ] All loops have constant bounds
-- [ ] No division by zero possible
-- [ ] Using branchless patterns (mix/step)
-- [ ] Appropriate precision qualifiers
-- [ ] Texture lookups cached
-- [ ] Uniforms batched into vectors/matrices
-
-### Phase 3: Before Committing
-
-- [ ] All shader tests pass: `npm run test:shaders`
-- [ ] Visual regression tests pass: `npm run test:visual`
-- [ ] Performance benchmark meets targets: `npm run bench:shaders`
-- [ ] Cross-browser compatibility verified
-- [ ] No artifacts at edge cases (UV 0,0 and 1,1)
-- [ ] Smooth animation timing verified
-
-## 10. Summary
-
-GLSL shaders power the visual effects in JARVIS HUD:
-
-1. **TDD First**: Write tests before shaders - compilation, uniforms, visual regression
-2. **Performance**: Use branchless patterns, texture atlases, LOD, precision optimization
-3. **Safety**: Constant loop bounds, guard divisions
-4. **Testing**: Verify across target browsers, benchmark GPU performance
-
-**Remember**: Shaders run on GPU - a single bad shader can freeze the entire system.
+1. **Use built-ins**: `length()`, `normalize()`, `distance()`, `clamp()`, `mix()`, `smoothstep()`
+2. **Avoid branching**: Use `mix()` + `step()` instead of if/else
+3. **Vector ops**: `p * p` instead of per-component scalar multiply
+4. **Early exit**: Break from raymarch loops on hit or max distance
+5. **Cache texture lookups**: Store `texture(...)` result in variable
+6. **Limit raymarching**: 64-128 steps max, adaptive precision `d < 0.001 * t`
+7. **FBM octaves**: 4-6 for visual quality, more is diminishing returns
+8. **Keep it simple**: 3 similar lines > premature abstraction
 
 ---
 
 **References**:
-- `references/advanced-patterns.md` - Complex shader techniques
+- `references/advanced-patterns.md` — Complete SDF library, noise variants, effect recipes, OKLab color space
