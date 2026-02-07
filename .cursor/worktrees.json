@@ -1,0 +1,13 @@
+{
+  "setup-worktree-unix": [
+    "npm ci",
+    "test -f \"$ROOT_WORKTREE_PATH/.env\" && cp \"$ROOT_WORKTREE_PATH/.env\" .env || true"
+  ],
+  "setup-worktree-windows": [
+    "npm ci",
+    "if (Test-Path \"$env:ROOT_WORKTREE_PATH\\.env\") { Copy-Item \"$env:ROOT_WORKTREE_PATH\\.env\" .env }"
+  ],
+  "setup-worktree": [
+    "npm ci"
+  ]
+}
