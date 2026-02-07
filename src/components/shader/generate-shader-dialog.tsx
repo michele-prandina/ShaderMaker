@@ -29,17 +29,16 @@ export function GenerateShaderDialog({ open, onOpenChange }: GenerateShaderDialo
   const [prompt, setPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
-  const pollCountRef = useRef(0);
 
   const addShader = useShaderStore((s) => s.addShader);
   const setActive = useShaderStore((s) => s.setActive);
 
-  // Cleanup polling on unmount or close
+  // Cleanup on unmount or close
   useEffect(() => {
     if (!open) {
-      stopPolling();
-      // Reset state when dialog closes
+      stopListening();
       if (!isGenerating) {
         setName("");
         setPrompt("");
@@ -48,12 +47,75 @@ export function GenerateShaderDialog({ open, onOpenChange }: GenerateShaderDialo
     }
   }, [open, isGenerating]);
 
-  function stopPolling() {
+  function stopListening() {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = undefined;
     }
-    pollCountRef.current = 0;
+  }
+
+  function handleShaderReceived(code: string, shaderName: string) {
+    createShader(code, shaderName || name || "AI Shader");
+    resetAndClose();
+  }
+
+  function startSSEStream(requestId: string) {
+    const es = new EventSource(`${MCP_URL}/api/stream/${requestId}`);
+    eventSourceRef.current = es;
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.status === "completed") {
+          es.close();
+          eventSourceRef.current = null;
+          handleShaderReceived(data.code, data.name);
+        } else if (data.status === "error") {
+          es.close();
+          eventSourceRef.current = null;
+          setIsGenerating(false);
+          setError(data.error || "Request not found.");
+        }
+      } catch { /* ignore parse errors */ }
+    };
+
+    es.onerror = () => {
+      // SSE failed — fall back to polling
+      es.close();
+      eventSourceRef.current = null;
+      startPollingFallback(requestId);
+    };
+  }
+
+  function startPollingFallback(requestId: string) {
+    let count = 0;
+    pollRef.current = setInterval(async () => {
+      count++;
+      if (count > 90) { // 3 minutes at 2s intervals
+        stopListening();
+        setIsGenerating(false);
+        setError("Timed out waiting for shader generation.");
+        return;
+      }
+      try {
+        const pollRes = await fetch(`${MCP_URL}/api/result/${requestId}`);
+        if (!pollRes.ok) {
+          stopListening();
+          setIsGenerating(false);
+          setError("Request not found. The MCP server may have restarted.");
+          return;
+        }
+        const data = await pollRes.json();
+        if (data.status === "completed") {
+          stopListening();
+          handleShaderReceived(data.code, data.name);
+        }
+      } catch { /* network error, keep trying */ }
+    }, 2000);
   }
 
   function createShader(code: string, shaderName: string) {
@@ -103,38 +165,9 @@ export function GenerateShaderDialog({ open, onOpenChange }: GenerateShaderDialo
       }
 
       const { id: requestId } = await res.json();
-      pollCountRef.current = 0;
 
-      // Poll every 2 seconds for up to 2 minutes
-      pollRef.current = setInterval(async () => {
-        pollCountRef.current++;
-
-        if (pollCountRef.current > 60) {
-          stopPolling();
-          setIsGenerating(false);
-          setError("Timed out waiting for shader generation. Please try again.");
-          return;
-        }
-
-        try {
-          const pollRes = await fetch(`${MCP_URL}/api/result/${requestId}`);
-          if (!pollRes.ok) {
-            stopPolling();
-            setIsGenerating(false);
-            setError("Request not found. The MCP server may have restarted.");
-            return;
-          }
-
-          const data = await pollRes.json();
-          if (data.status === "completed") {
-            stopPolling();
-            createShader(data.code, data.name || name || "AI Shader");
-            resetAndClose();
-          }
-        } catch {
-          // Network error during poll — keep trying
-        }
-      }, 2000);
+      // Use SSE for real-time result delivery, with polling fallback
+      startSSEStream(requestId);
     } catch (err) {
       setIsGenerating(false);
       setError(
@@ -146,7 +179,7 @@ export function GenerateShaderDialog({ open, onOpenChange }: GenerateShaderDialo
   }
 
   function resetAndClose() {
-    stopPolling();
+    stopListening();
     setIsGenerating(false);
     setName("");
     setPrompt("");
@@ -194,7 +227,7 @@ export function GenerateShaderDialog({ open, onOpenChange }: GenerateShaderDialo
 
           {isGenerating && (
             <p className="text-sm text-muted-foreground">
-              Waiting for AI to generate your shader... Tell Claude Code to &quot;check shader requests&quot;.
+              Waiting for AI generation... The result will appear automatically.
             </p>
           )}
 
@@ -204,9 +237,15 @@ export function GenerateShaderDialog({ open, onOpenChange }: GenerateShaderDialo
         </div>
 
         <DialogFooter>
-          <Button variant="ghost" onClick={handleCreateBlank} disabled={isGenerating}>
-            Create Blank
-          </Button>
+          {isGenerating ? (
+            <Button variant="ghost" onClick={() => { stopListening(); setIsGenerating(false); }}>
+              Cancel
+            </Button>
+          ) : (
+            <Button variant="ghost" onClick={handleCreateBlank}>
+              Create Blank
+            </Button>
+          )}
           <Button onClick={handleGenerate} disabled={isGenerating || !prompt.trim()}>
             {isGenerating ? (
               <>
